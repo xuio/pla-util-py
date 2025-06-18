@@ -401,4 +401,4 @@ def _fmt_station_info(pkt: Any):
     hw_version = int.from_bytes(payload[13:17], "little")
 
     print("Chip Version:                    ", chip_version)
-    print("Hardware Version:                ", f"0x{hw_version:08x}") 
+    print("Hardware Version:                ", f"0x{hw_version:08x}")

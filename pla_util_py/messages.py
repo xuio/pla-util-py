@@ -116,4 +116,4 @@ def ether_type_for_payload(payload: bytes) -> int:
     (index 2).  We replicate the same logic here.
     """
 
-    return 0x8912 if payload[2] == 0xA0 else 0x88E1 
+    return 0x8912 if payload[2] == 0xA0 else 0x88E1

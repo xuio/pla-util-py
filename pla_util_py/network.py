@@ -156,4 +156,4 @@ def send_message_collect(
 
     # Collect more for *window* seconds, including the first packet
     more = sniff(iface=iface, timeout=window, lfilter=_match)
-    return first + more 
+    return first + more
