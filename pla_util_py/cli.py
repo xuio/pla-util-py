@@ -33,6 +33,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default="info",
         help="Set log verbosity (default: info)",
     )
+    p.add_argument(
+        "-t",
+        "--timeout",
+        type=float,
+        default=0.5,
+        help="Network timeout in seconds (default: 0.5)",
+    )
 
     sub = p.add_subparsers(dest="command", required=True, metavar="<command>")
 
@@ -76,7 +83,7 @@ def main(argv: list[str] | None = None):
     func = _COMMAND_MAP[args.command]
 
     try:
-        reply = func(interface=args.interface, pla_mac=args.pla_mac)  # type: ignore[arg-type]
+        reply = func(interface=args.interface, pla_mac=args.pla_mac, timeout=args.timeout)  # type: ignore[arg-type]
 
         if reply is None:
             print("No reply – the adapter did not respond within the timeout.")
