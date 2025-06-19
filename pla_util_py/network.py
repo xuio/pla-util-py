@@ -18,8 +18,11 @@ file descriptor.  Scapy does all the heavy lifting for us.
 from typing import Optional
 import logging
 import time
+import platform
+import os
 
 from scapy.all import Ether, Raw, sendp, sniff, conf, get_if_hwaddr  # type: ignore
+from scapy.sendrecv import AsyncSniffer  # type: ignore
 
 from .messages import ether_type_for_payload
 
@@ -76,7 +79,6 @@ def send_message(
     frame = Ether(src=src_mac, dst=dest_mac, type=ether_type) / Raw(load=payload)
 
     _LOG.debug("Sending %d-byte frame on %s (0x%04x → %s)", len(payload), iface, ether_type, dest_mac)
-    sendp(frame, iface=iface, verbose=False)
 
     # The reply can come from *any* PLA, so we only filter on EtherType (and
     # destination MAC == our MAC).  If the caller specified a unicast dest MAC
@@ -93,8 +95,18 @@ def send_message(
             return False
         return True
 
+    # Arm the sniffer *before* sending to avoid timing races where the reply
+    # arrives faster than we can call sniff().  AsyncSniffer runs in a
+    # separate thread and will stop automatically after *timeout* seconds or
+    # after the *count* is reached (whichever comes first).
+    sniffer = AsyncSniffer(iface=iface, timeout=timeout, lfilter=_match, count=1, store=True)
+    sniffer.start()
+
     t_start = time.time()
-    pkts = sniff(iface=iface, timeout=timeout, lfilter=_match, count=1)
+    sendp(frame, iface=iface, verbose=False)
+
+    sniffer.join(timeout + 0.1)  # small guard interval
+    pkts = sniffer.results  # type: ignore[attr-defined]
     elapsed = time.time() - t_start
 
     if pkts:
@@ -136,7 +148,13 @@ def send_message_collect(
     _LOG.debug(
         "[collect] Sending %d-byte frame on %s (0x%04x → %s)", len(payload), iface, ether_type, dest_mac
     )
-    sendp(frame, iface=iface, verbose=False)
+
+    # Arm a sniffer to capture *all* matching packets, first until the first
+    # reply (or *timeout*), then for an additional *window* seconds so we can
+    # gather confirmations from other adapters.
+
+    # We cannot express this "wait X seconds *after* first match" logic with
+    # a single AsyncSniffer, so we use a small helper below.
 
     def _match(pkt):  # type: ignore[override]
         if Ether not in pkt:
@@ -149,11 +167,19 @@ def send_message_collect(
             return False
         return True
 
-    # First packet (blocking up to *timeout*)
-    first = sniff(iface=iface, timeout=timeout, lfilter=_match, count=1)
+    first_sniffer = AsyncSniffer(iface=iface, timeout=timeout, lfilter=_match, count=1, store=True)
+    first_sniffer.start()
+    sendp(frame, iface=iface, verbose=False)
+    first_sniffer.join(timeout + 0.1)
+
+    first = first_sniffer.results  # type: ignore[attr-defined]
     if not first:
         return []
 
-    # Collect more for *window* seconds, including the first packet
-    more = sniff(iface=iface, timeout=window, lfilter=_match)
+    # Collect more replies for *window* seconds (non-blocking).
+    more_sniffer = AsyncSniffer(iface=iface, timeout=window, lfilter=_match, store=True)
+    more_sniffer.start()
+    more_sniffer.join(window + 0.1)
+    more = more_sniffer.results  # type: ignore[attr-defined]
+
     return first + more
