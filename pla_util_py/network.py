@@ -15,7 +15,7 @@ The original program uses libpcap in *immediate* mode and waits on a poll()able
 file descriptor.  Scapy does all the heavy lifting for us.
 """
 
-from typing import Optional
+from typing import Optional, Any
 import logging
 import time
 import platform
@@ -118,6 +118,19 @@ def send_message(
 
 
 # ---------------------------------------------------------------------------
+# Platform-specific tweak ------------------------------------------------------
+# ---------------------------------------------------------------------------
+# On Linux Scapy's libpcap backend buffers packets unless immediate mode is
+# enabled – that makes our sub-second timeouts unreliable.  Scapy's raw-socket
+# backend, on the other hand, delivers frames right away (similar to the BPF
+# backend used by default on macOS).  We therefore disable libpcap when we're
+# on Linux, unless the user forces it back via an environment variable.
+if platform.system() == "Linux" and not bool(int(os.getenv("PLA_UTIL_PY_FORCE_PCAP", "0"))):
+    conf.use_pcap = True
+    _LOG.debug("Running on Linux – disabled libpcap backend (use raw sockets)")
+
+
+# ---------------------------------------------------------------------------
 # Helper that collects **all** replies for a short window
 # ---------------------------------------------------------------------------
 
@@ -167,19 +180,35 @@ def send_message_collect(
             return False
         return True
 
-    first_sniffer = AsyncSniffer(iface=iface, timeout=timeout, lfilter=_match, count=1, store=True)
-    first_sniffer.start()
-    sendp(frame, iface=iface, verbose=False)
-    first_sniffer.join(timeout + 0.1)
+    # ------------------------------------------------------------------
+    # Capture helper ----------------------------------------------------
+    # ------------------------------------------------------------------
+    captured: list[Any] = []  # we will fill this from the sniffer callback
 
-    first = first_sniffer.results  # type: ignore[attr-defined]
-    if not first:
+    def _store(pkt):  # type: ignore[override]
+        captured.append(pkt)
+
+    # Start sniffer *before* we transmit to avoid races.  We do not rely on
+    # the "results" attribute (which is only populated once the sniffer is
+    # stopped) but store packets on-the-fly via the callback above.
+
+    sniffer = AsyncSniffer(iface=iface, lfilter=_match, prn=_store, store=False)
+    sniffer.start()
+
+    sendp(frame, iface=iface, verbose=False)
+
+    # Wait for the first confirmation up to *timeout* seconds.
+    deadline = time.time() + timeout
+    while time.time() < deadline and not captured:
+        time.sleep(0.01)
+
+    if not captured:  # nothing at all
+        sniffer.stop()
         return []
 
-    # Collect more replies for *window* seconds (non-blocking).
-    more_sniffer = AsyncSniffer(iface=iface, timeout=window, lfilter=_match, store=True)
-    more_sniffer.start()
-    more_sniffer.join(window + 0.1)
-    more = more_sniffer.results  # type: ignore[attr-defined]
+    # First reply seen – keep listening for *window* seconds more.
+    time.sleep(window)
 
-    return first + more
+    sniffer.stop()
+
+    return captured
