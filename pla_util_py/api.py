@@ -115,12 +115,14 @@ class PLAUtil:
     def network_stats(self, *, timeout: float | None = None) -> List[Dict[str, Any]]:
         cmd_timeout = timeout or commands.DEFAULT_TIMEOUT
         if self.backend == "qca":
-            pkt = commands.qca_get_network_info(self.interface, self.pla_mac, timeout=cmd_timeout)
+            pkt = self._qca_get_network_info_packet(cmd_timeout)
+            if pkt is None:
+                return []
             return parsers.parse_qca_network_stats(pkt)
 
         if self.backend is None and self.pla_mac:
             try:
-                pkt = commands.qca_get_network_info(self.interface, self.pla_mac, timeout=cmd_timeout)
+                pkt = self._qca_get_network_info_packet(cmd_timeout)
                 if pkt is not None:
                     return parsers.parse_qca_network_stats(pkt)
             except Exception:
@@ -150,8 +152,15 @@ class PLAUtil:
         return parsers.parse_qca_sw_version(pkt)
 
     def qca_network_info(self, *, timeout: float | None = None) -> Dict[str, Any]:
-        pkt = commands.qca_get_network_info(self.interface, self.pla_mac, timeout=timeout or commands.DEFAULT_TIMEOUT)
+        pkt = self._qca_get_network_info_packet(timeout or commands.DEFAULT_TIMEOUT)
         return parsers.parse_qca_network_info(pkt)
+
+    def _qca_get_network_info_packet(self, timeout: float):
+        for _ in range(2):
+            pkt = commands.qca_get_network_info(self.interface, self.pla_mac, timeout=timeout)
+            if pkt is not None:
+                return pkt
+        return None
 
     # ------------------------------------------------------------------
     # Actions
