@@ -15,7 +15,7 @@ The original program uses libpcap in *immediate* mode and waits on a poll()able
 file descriptor.  Scapy does all the heavy lifting for us.
 """
 
-from typing import Optional, Any
+from typing import Callable, Optional, Any
 import logging
 import time
 import platform
@@ -66,6 +66,8 @@ def send_message(
     interface: Optional[str] = None,
     dest_mac: str = BROADCAST_MAC,
     timeout: float = DEFAULT_TIMEOUT,
+    ether_type: int | None = None,
+    response_match: Callable[[Any], bool] | None = None,
 ):
     """Send *payload* on *interface* to *dest_mac* and wait for a reply.
 
@@ -73,7 +75,8 @@ def send_message(
     """
 
     iface = _resolve_interface(interface)
-    ether_type = ether_type_for_payload(payload)
+    if ether_type is None:
+        ether_type = ether_type_for_payload(payload)
     src_mac = get_if_hwaddr(iface)
 
     frame = Ether(src=src_mac, dst=dest_mac, type=ether_type) / Raw(load=payload)
@@ -92,6 +95,8 @@ def send_message(
             return False
         # When we addressed a specific adapter, enforce that in the reply.
         if dest_mac != BROADCAST_MAC and pkt[Ether].src.lower() != dest_mac.lower():
+            return False
+        if response_match is not None and not response_match(pkt):
             return False
         return True
 
@@ -141,6 +146,8 @@ def send_message_collect(
     dest_mac: str = BROADCAST_MAC,
     timeout: float = DEFAULT_TIMEOUT,
     window: float | None = None,
+    ether_type: int | None = None,
+    response_match: Callable[[Any], bool] | None = None,
 ):
     """Send *payload* and return a list of reply packets.
 
@@ -153,7 +160,8 @@ def send_message_collect(
         window = timeout
 
     iface = _resolve_interface(interface)
-    ether_type = ether_type_for_payload(payload)
+    if ether_type is None:
+        ether_type = ether_type_for_payload(payload)
     src_mac = get_if_hwaddr(iface)
 
     frame = Ether(src=src_mac, dst=dest_mac, type=ether_type) / Raw(load=payload)
@@ -177,6 +185,8 @@ def send_message_collect(
         if pkt[Ether].dst.lower() != src_mac.lower():
             return False
         if dest_mac != BROADCAST_MAC and pkt[Ether].src.lower() != dest_mac.lower():
+            return False
+        if response_match is not None and not response_match(pkt):
             return False
         return True
 
